@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+<title>기니피그 댄스</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+html,body{width:100%;height:100%;overflow:hidden;touch-action:none;}
+
+#stage{
+  width:100vw;height:100dvh;
+  position:relative;overflow:hidden;
+  cursor:pointer;user-select:none;-webkit-user-select:none;
+  background:#f0ebe3;
+  transition:background 0.5s ease;
+}
+#stage.dancing{background:#080808;}
+
+#spots{
+  position:absolute;inset:0;
+  opacity:0;transition:opacity 0.4s ease;
+  z-index:1;pointer-events:none;
+}
+#stage.dancing #spots{opacity:1;}
+
+#string{
+  position:absolute;top:0;left:50%;
+  width:1px;background:rgba(255,255,255,0.2);
+  height:0;transform:translateX(-50%);
+  transition:height 0.65s cubic-bezier(0.34,1.1,0.64,1);
+  z-index:2;pointer-events:none;
+}
+#stage.dancing #string{height:min(16vw,75px);}
+
+#ball-wrap{
+  position:absolute;top:0;left:50%;
+  transform:translateX(-50%) translateY(-115%);
+  transition:transform 0.65s cubic-bezier(0.34,1.1,0.64,1);
+  z-index:3;pointer-events:none;
+}
+#stage.dancing #ball-wrap{transform:translateX(-50%) translateY(-8%);}
+#ball{width:min(26vw,120px);height:auto;display:block;}
+#stage.dancing #ball{animation:spin 5s linear infinite;}
+@keyframes spin{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}
+
+/*
+  바닥선 = 화면 아래서 35% 지점 (bottom: 35%)
+  플로어 캔버스 = bottom:0 ~ 35% 높이
+  기니 = 발끝이 바닥선에 맞게
+*/
+
+#floor{
+  position:absolute;
+  bottom:0;left:0;right:0;
+  height:35%;
+  z-index:2;pointer-events:none;
+  display:block;width:100%;
+}
+
+#hint{
+  position:absolute;
+  /* 기니 머리 위 */
+  bottom:calc(35% + min(72vw,340px)*0.88);
+  left:0;right:0;
+  text-align:center;
+  z-index:5;
+  font-family:'Apple SD Gothic Neo','Noto Sans KR',sans-serif;
+  font-size:clamp(13px,3.8vw,17px);
+  font-weight:500;letter-spacing:0.04em;
+  color:rgba(0,0,0,0.3);
+  transition:opacity 0.35s ease;
+  pointer-events:none;
+}
+#stage.dancing #hint{opacity:0;}
+
+#gini{
+  position:absolute;
+  /* 발끝을 바닥선(bottom:35%)에 정확히 맞춤 */
+  bottom:35%;
+  left:50%;
+  transform:translateX(-50%);
+  width:min(72vw,340px);height:auto;
+  object-fit:contain;pointer-events:none;
+  will-change:transform;
+  z-index:5;
+  transition:filter 0.4s ease;
+}
+#stage.dancing #gini{
+  filter:drop-shadow(0 6px 28px rgba(160,100,255,0.35));
+}
+#gini.pop{transform:translateX(-50%) scale(1.08);}
+
+.ripple{
+  position:absolute;border-radius:50%;
+  background:rgba(255,255,255,0.07);
+  width:220px;height:220px;
+  margin-left:-110px;margin-top:-110px;
+  pointer-events:none;
+  animation:ripple 0.7s ease-out forwards;
+  z-index:2;
+}
+@keyframes ripple{
+  0%{transform:scale(0);opacity:1;}
+  100%{transform:scale(4.5);opacity:0;}
+}
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="spots"></canvas>
+  <div id="string"></div>
+  <div id="ball-wrap"><img id="ball" src="ball.png" alt="" draggable="false"/></div>
+
+  <p id="hint">꾹 누르면 기니가 춤을 춰요!</p>
+  <img id="gini" src="gini.png" alt="" draggable="false"/>
+  <canvas id="floor"></canvas>
+</div>
+
+<script>
+const FRAMES=['dance1.png','dance2.png','dance3.png','dance4.png','dance5.png',
+              'dance6.png','dance7.png','dance8.png','dance9.png','dance10.png'];
+const REST='gini.png';
+const FPS=115;
+
+FRAMES.forEach(s=>{const i=new Image();i.src=s;});
+(new Image()).src='ball.png';
+
+const stage=document.getElementById('stage');
+const img=document.getElementById('gini');
+const spotsCanvas=document.getElementById('spots');
+const sCtx=spotsCanvas.getContext('2d');
+const floorCanvas=document.getElementById('floor');
+const fCtx=floorCanvas.getContext('2d');
+
+function shuffle(arr){
+  const a=[...arr];
+  for(let i=a.length-1;i>0;i--){
+    const j=Math.floor(Math.random()*(i+1));
+    [a[i],a[j]]=[a[j],a[i]];
+  }
+  return a;
+}
+let queue=shuffle(FRAMES),qIdx=0;
+function nextSrc(){
+  if(qIdx>=queue.length){
+    let n=shuffle(FRAMES);
+    while(n[0]===queue[queue.length-1])n=shuffle(FRAMES);
+    queue=n;qIdx=0;
+  }
+  return queue[qIdx++];
+}
+
+const COLORS=['rgba(80,140,255,','rgba(60,220,120,','rgba(255,60,80,','rgba(200,60,255,','rgba(255,200,50,'];
+let spots=[],spotAnimId=null;
+
+function resizeSpotsCanvas(){
+  spotsCanvas.width=window.innerWidth;
+  spotsCanvas.height=window.innerHeight;
+}
+resizeSpotsCanvas();
+window.addEventListener('resize',()=>{resizeSpotsCanvas();resizeFloor();});
+
+function spawnSpots(){
+  spots=Array.from({length:16},(_,i)=>({
+    x:Math.random()*spotsCanvas.width,
+    y:Math.random()*spotsCanvas.height,
+    r:Math.random()*80+25,
+    dx:(Math.random()-0.5)*2.8,
+    dy:(Math.random()-0.5)*2.8,
+    color:COLORS[i%COLORS.length],
+    alpha:Math.random()*0.22+0.07,
+    phase:Math.random()*Math.PI*2,
+    speed:Math.random()*0.05+0.025
+  }));
+}
+function drawSpots(t){
+  sCtx.clearRect(0,0,spotsCanvas.width,spotsCanvas.height);
+  spots.forEach(s=>{
+    s.x+=s.dx;s.y+=s.dy;
+    if(s.x<-s.r||s.x>spotsCanvas.width+s.r)s.dx*=-1;
+    if(s.y<-s.r||s.y>spotsCanvas.height+s.r)s.dy*=-1;
+    const pulse=s.alpha*(0.55+0.45*Math.sin(t*s.speed+s.phase));
+    const g=sCtx.createRadialGradient(s.x,s.y,0,s.x,s.y,s.r);
+    g.addColorStop(0,s.color+pulse+')');
+    g.addColorStop(1,s.color+'0)');
+    sCtx.fillStyle=g;
+    sCtx.beginPath();sCtx.arc(s.x,s.y,s.r,0,Math.PI*2);sCtx.fill();
+  });
+}
+function loopSpots(t){drawSpots(t);spotAnimId=requestAnimationFrame(loopSpots);}
+
+const TILE_COLORS=[
+  [255,60,80],[80,140,255],[60,220,120],[200,60,255],[255,200,50],
+  [255,120,30],[40,200,220],[255,60,160],[120,255,80],[100,100,255]
+];
+const COLS=10;
+let tiles=[],floorAnimId=null;
+
+function resizeFloor(){
+  const dpr=window.devicePixelRatio||1;
+  const W=floorCanvas.offsetWidth;
+  const H=floorCanvas.offsetHeight;
+  floorCanvas.width=W*dpr;
+  floorCanvas.height=H*dpr;
+  fCtx.setTransform(dpr,0,0,dpr,0,0);
+  buildTiles(W,H);
+}
+
+function buildTiles(W,H){
+  const tw=W/COLS;
+  const ROWS=Math.ceil(H/tw)+1;
+  tiles=[];
+  for(let r=0;r<ROWS;r++){
+    for(let c=0;c<COLS;c++){
+      const base=TILE_COLORS[Math.floor(Math.random()*TILE_COLORS.length)];
+      tiles.push({
+        x:c*tw,y:r*tw,w:tw,h:tw,
+        base:[...base],
+        phase:Math.random()*Math.PI*2,
+        speed:Math.random()*0.04+0.02,
+        bright:Math.random()*0.6+0.15
+      });
+    }
+  }
+}
+
+function drawFloor(t){
+  const W=floorCanvas.offsetWidth;
+  const H=floorCanvas.offsetHeight;
+  fCtx.clearRect(0,0,W,H);
+  tiles.forEach(tile=>{
+    const pulse=tile.bright*(0.4+0.6*Math.abs(Math.sin(t*tile.speed+tile.phase)));
+    const r=Math.round(tile.base[0]*pulse);
+    const g=Math.round(tile.base[1]*pulse);
+    const b=Math.round(tile.base[2]*pulse);
+    const alpha=0.15+pulse*0.75;
+    fCtx.fillStyle=`rgba(${r},${g},${b},${alpha})`;
+    fCtx.fillRect(tile.x+1,tile.y+1,tile.w-2,tile.h-2);
+    if(pulse>0.45){
+      fCtx.fillStyle=`rgba(255,255,255,${(pulse-0.45)*0.4})`;
+      fCtx.fillRect(tile.x+2,tile.y+2,tile.w*0.4,tile.h*0.3);
+    }
+    fCtx.strokeStyle='rgba(255,255,255,0.09)';
+    fCtx.lineWidth=0.5;
+    fCtx.strokeRect(tile.x,tile.y,tile.w,tile.h);
+  });
+  const fade=fCtx.createLinearGradient(0,0,0,H*0.35);
+  fade.addColorStop(0,'rgba(8,8,8,1)');
+  fade.addColorStop(1,'rgba(8,8,8,0)');
+  fCtx.fillStyle=fade;
+  fCtx.fillRect(0,0,W,H*0.35);
+}
+function loopFloor(t){drawFloor(t);floorAnimId=requestAnimationFrame(loopFloor);}
+
+let holding=false,frameTimer=null,resetTimer=null;
+
+function startDance(x,y){
+  if(holding)return;
+  holding=true;
+  clearTimeout(resetTimer);
+  stage.classList.add('dancing');
+  spawnSpots();
+  cancelAnimationFrame(spotAnimId);
+  spotAnimId=requestAnimationFrame(loopSpots);
+  cancelAnimationFrame(floorAnimId);
+  floorAnimId=requestAnimationFrame(loopFloor);
+  spawnRipple(x,y);
+  img.classList.add('pop');
+  setTimeout(()=>img.classList.remove('pop'),120);
+  img.src=nextSrc();
+  frameTimer=setInterval(()=>{img.src=nextSrc();},FPS);
+}
+
+function stopDance(){
+  if(!holding)return;
+  holding=false;
+  clearInterval(frameTimer);
+  stage.classList.remove('dancing');
+  cancelAnimationFrame(spotAnimId);
+  sCtx.clearRect(0,0,spotsCanvas.width,spotsCanvas.height);
+  cancelAnimationFrame(floorAnimId);
+  fCtx.clearRect(0,0,floorCanvas.width,floorCanvas.height);
+  resetTimer=setTimeout(()=>{img.src=REST;},240);
+}
+
+function spawnRipple(x,y){
+  const el=document.createElement('div');
+  el.className='ripple';
+  el.style.left=x+'px';el.style.top=y+'px';
+  stage.appendChild(el);
+  el.addEventListener('animationend',()=>el.remove());
+}
+
+stage.addEventListener('mousedown',e=>startDance(e.clientX,e.clientY));
+stage.addEventListener('mouseup',stopDance);
+stage.addEventListener('mouseleave',stopDance);
+stage.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  const t=e.touches[0];startDance(t.clientX,t.clientY);
+},{passive:false});
+stage.addEventListener('touchend',e=>{
+  e.preventDefault();stopDance();
+},{passive:false});
+
+resizeFloor();
+</script>
+</body>
+</html>
